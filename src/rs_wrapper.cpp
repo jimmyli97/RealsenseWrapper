@@ -6,11 +6,10 @@
 
 namespace rsw {
 	RealSenseWrapper::RealSenseWrapper(std::string directory) :
-									   _deviceMap(), dataPath(directory) {
-		//rs::context ctx;
-		/*// Open directory, check validity
+									   ctx(), _deviceMap(), dataPath(directory) {
 		rs::log_to_console(rs::log_severity::warn);
-
+		
+		// Open directory, check validity
 		if (fs::exists(dataPath) && fs::is_directory(dataPath)) {
 			// Initialize mapping
 			for (auto dirEnt : fs::directory_iterator(dataPath)) {
@@ -19,6 +18,8 @@ namespace rsw {
 				_deviceMap[fn] = NULL;
 			}
 
+			fs::create_directory(dataPath / "1234");
+
 			// Find matching connected devices, add to map
 			for (int i = 0; i < ctx.get_device_count(); ++i) {
 				std::string serial = std::string(ctx.get_device(i)->get_serial());
@@ -26,15 +27,14 @@ namespace rsw {
 				
 				if (_deviceMap.count(serial) == 0) {
 					// No recordings exist, create a folder
+					fs::create_directory(dataPath / serial);
 				}
-				else {
-					_deviceMap[serial] = ctx.get_device(i);
-				}
+				_deviceMap[serial] = ctx.get_device(i);
 			}
 		}
 		else {
 			throw new std::invalid_argument("Invalid argument: Unable to open folder");
-		}*/
+		}
 	}
 
 	RealSenseWrapper::~RealSenseWrapper() {
@@ -45,12 +45,10 @@ namespace rsw {
 using namespace std;
 
 int main(void) try {
-	rs::log_to_console(rs::log_severity::warn);
-	rs::context ctx;
-	//std::string dirName = "C:\\Users\\yimmy\\Documents\\work\\CAMP2016\\rswrapper_frames";
-	//rsw::RealSenseWrapper realsense(dirName);
+	std::string dirName = "C:\\Users\\yimmy\\Documents\\work\\CAMP2016\\rswrapper_frames";
+	rsw::RealSenseWrapper realsense(dirName);
 	std::cout << "Waiting...";
-	int i;
+	std::string i;
 	std::cin >> i;
 	return 0;
 }

@@ -42,7 +42,7 @@ namespace rsw {
 		rs::device * getDevice(std::string serial);
 
 		int i;
-		//rs::context ctx;
+		rs::context ctx;
 		fs::path dataPath;
 		std::map<std::string, rs::device *> _deviceMap;
 	};
