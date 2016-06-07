@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.5.2)
+set (BUILD_SHARED_LIBS FALSE)
+
 project (rswrapper)
 
 file (GLOB SOURCES "src/*.cpp" "src/*.h")
