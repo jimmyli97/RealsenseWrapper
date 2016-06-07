@@ -47,6 +47,33 @@ using namespace std;
 int main(void) try {
 	std::string dirName = "C:\\Users\\yimmy\\Documents\\work\\CAMP2016\\rswrapper_frames";
 	rsw::RealSenseWrapper realsense(dirName);
+
+	// TEST: get list of devices
+	std::vector<std::string> deviceList = realsense.getDeviceList();
+	for (auto str : deviceList) {
+		std::cout << "Device Serial: " << str << std::endl;
+	}
+
+	// TEST: print status of devices (attached/not attached, available playback, if stream is streaming)
+	realsense.printStatus();
+
+	// TEST: frame does not exist error
+	void * data;
+	int ret = realsense.getFrame(data, "serial", rs::stream::color, "serial_color", 102);
+	// TODO: check error code here
+
+	// TEST: starting multiple streams
+	ret = realsense.startStream("serial", rs::stream::depth, "serial_depth", rs::preset::highest_framerate);
+	ret = realsense.startStream("serial", rs::stream::color, "serial_color", rs::preset::highest_framerate);
+
+	// TEST: stopping only one stream
+	ret = realsense.stopStream("serial", rs::stream::color);
+
+	// TEST: grabbing frame data from stopped stream and from live stream
+	ret = realsense.getFrame(data, "serial", rs::stream::color, "serial_color", 203);
+	ret = realsense.getFrame(data, "serial", rs::stream::depth, "serial_depth", 204);
+
+	// TODO: test stream name conflicts
 	std::cout << "Waiting...";
 	std::string i;
 	std::cin >> i;

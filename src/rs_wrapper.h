@@ -28,7 +28,7 @@ namespace rsw {
 		void printStatus();
 
 		/// Returns frame at specified timestamp of specified stream
-		RSError getFrame(const void * frame, std::string serial, rs::stream strm,
+		RSError getFrame(void * data, std::string serial, rs::stream strm,
 			std::string streamName, int timestamp);
 
 		RSError startStream(std::string serial, rs::stream strm, std::string streamName, rs::preset preset);
