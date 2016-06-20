@@ -12,37 +12,9 @@
 #define TEST_SERIAL "023150187408"
 
 namespace rsw {
-	void RealSenseWrapper::overwatchLoop() {
-		while (!done) {
-			_writeInfoM.lock();
-			std::vector<fs::path> toDelete;
-			for (auto info : _writeInfo) {
-				if (std::get<2>(info.second)) {
-					std::get<0>(info.second)->join();
-					toDelete.push_back(info.first);
-				}
-			}
-			for (auto del : toDelete) {
-				delete std::get<0>(_writeInfo[del]);
-				_writeInfo.erase(del);
-			}
-			_writeInfoM.unlock();
-			std::this_thread::yield();
-		}
-		// stop all threads
-		_writeInfoM.lock();
-		for (auto info : _writeInfo) {
-			info.second = make_tuple(std::get<0>(info.second), std::get<1>(info.second), true);
-			std::get<0>(info.second)->join();
-			delete std::get<0>(info.second);
-		}
-		_writeInfoM.unlock();
-	}
-	
 	RealSenseWrapper::RealSenseWrapper(std::string directory) :
 									   ctx(), _deviceMap(), _deviceMapM(), 
-									   _writeInfo(), _writeInfoM(), dataPath(directory),
-									   done(false), overwatch() {
+									   dataPath(directory) {
 		rs::log_to_console(rs::log_severity::debug);
 		
 		// Open directory, check validity
@@ -63,10 +35,9 @@ namespace rsw {
 					// No recordings exist, create a folder
 					fs::create_directory(dataPath / serial);
 				}
-				_deviceMap[serial].first = ctx.get_device(i);
-				_deviceMap[serial].second = new std::mutex();
+				_deviceMap[serial] = std::make_tuple(ctx.get_device(i), new std::mutex(),
+					std::get<2>(_deviceMap[serial]));
 			}
-			overwatch = new std::thread(&RealSenseWrapper::overwatchLoop, this);
 		}
 		else {
 			throw new std::invalid_argument("Invalid argument: Unable to open folder");
@@ -75,13 +46,11 @@ namespace rsw {
 
 	RealSenseWrapper::~RealSenseWrapper() {
 		// Stop all threads
-		done = true;
-		overwatch->join();
-		delete overwatch;
-		// Release all mutexes
-		for (auto item : _deviceMap) {
-			delete item.second.second;
+		for (auto dev : _deviceMap) {
+			for (auto threads : std::get<2>(dev.second)) {
+			}
 		}
+		// Release all mutexes
 	}
 
 	std::vector<std::string>* RealSenseWrapper::getDeviceList() {
@@ -105,9 +74,9 @@ namespace rsw {
 				items.second.second->lock();
 				std::cout << "  Connected: Yes" << std::endl;
 				std::cout << "  Device: " << dev->get_name() << std::endl;
+				/*
 				std::cout << "  Supported Streams: " << std::endl;
 
-				/*
 				// Show which streams are supported by this device
 				for (int j = 0; j < rs_stream::RS_STREAM_COUNT; ++j) {
 					// Determine number of available streaming modes (zero means stream is unavailable) 
@@ -141,13 +110,29 @@ namespace rsw {
 	}
 
 	RealSenseWrapper::RSError RealSenseWrapper::getFrame(std::vector<char>** data,
-			std::string serial, rs::stream strm, std::string streamName, int timestamp) {
-		fs::path p = dataPath / serial / rs_stream_to_string((rs_stream) strm) / streamName;
-		// Check if path is currently being written to
+		std::string serial, rs::stream strm, std::string streamName, int timestamp) {
+
+		fs::path p = dataPath / serial / rs_stream_to_string((rs_stream)strm) / streamName;
+
+		// Check if timestamp is available/if latest frame is available
 		_writeInfoM.lock_shared();
 		auto writingInfo = _writeInfo.find(p);
+		bool accessible = false;
 		if (writingInfo == _writeInfo.end() || (timestamp < std::get<1>(writingInfo->second))) {
-			_writeInfoM.unlock_shared();
+			accessible = true;
+		} else if (timestamp == -1) {
+			// get latest accessible timestamp
+			timestamp = std::get<1>(writingInfo->second);
+			while (--timestamp >= 0) {
+				if (fs::exists(p / std::to_string(timestamp))) {
+					accessible = true;
+					break;
+				}
+			}
+		}
+		_writeInfoM.unlock_shared();
+
+		if (accessible) {
 			// Read path
 			if (fs::is_regular_file(p / std::to_string(timestamp))) {
 				fs::ifstream ifs(p / std::to_string(timestamp), std::ios::in | std::ios::binary);
@@ -163,19 +148,40 @@ namespace rsw {
 		return UNABLE_TO_ACCESS;
 	}
 
+	// Copied from librealsense/src/image.cpp
+	int getImgSize(int width, int height, rs_format format) {
+		switch (format)
+		{
+		case RS_FORMAT_Z16: return width * height * 2;
+		case RS_FORMAT_DISPARITY16: return width * height * 2;
+		case RS_FORMAT_XYZ32F: return width * height * 12;
+		case RS_FORMAT_YUYV: assert(width % 2 == 0); return width * height * 2;
+		case RS_FORMAT_RGB8: return width * height * 3;
+		case RS_FORMAT_BGR8: return width * height * 3;
+		case RS_FORMAT_RGBA8: return width * height * 4;
+		case RS_FORMAT_BGRA8: return width * height * 4;
+		case RS_FORMAT_Y8: return width * height;
+		case RS_FORMAT_Y16: return width * height * 2;
+		case RS_FORMAT_RAW10: assert(width % 4 == 0); return width * 5 / 4 * height;
+		default: assert(false); return 0;
+		}
+	}
+
 	void RealSenseWrapper::writeImgLoop(fs::path p, std::string serial, rs::stream strm,
 			int width, int height, rs::format fmt, int framerate) {
 		_deviceMapM.lock_shared();
 		_deviceMap[serial].second->lock();
-		//_deviceMap[serial].first->enable_stream(strm, width, height, fmt, framerate);
-		_deviceMap[serial].first->enable_stream(strm, rs::preset::highest_framerate);
-		_deviceMap[serial].first->start();
+		auto dev = _deviceMap[serial].first;
+		if (dev->is_streaming()) {
+			dev->stop();
+		}
+		dev->enable_stream(strm, width, height, fmt, framerate);
+		dev->start();
 		_deviceMap[serial].second->unlock();
 		_deviceMapM.unlock_shared();
 
-		/* GLFW DEBUGGING */
-		GLFWwindow * win = glfwCreateWindow(1280, 960, "color", nullptr, nullptr);
-		
+		int imgSize = getImgSize(width, height, (rs_format)fmt);
+
 		while (true) {
 			_writeInfoM.lock_shared();
 			// check if we should stop
@@ -190,17 +196,10 @@ namespace rsw {
 					const char* data = static_cast<const char*>(dev->get_frame_data(strm));
 					fs::ofstream ofs(p / std::to_string(timestamp));
 
-					// not thread safe
-					glfwMakeContextCurrent(win);
-					glfwPollEvents();
-					glClear(GL_COLOR_BUFFER_BIT);
-					glPixelZoom(1, -1);
-					glRasterPos2f(0, 1);
-					glDrawPixels(640, 480, GL_RGB, GL_UNSIGNED_BYTE, data);
-					glfwSwapBuffers(win);
+					std::cout << "Writing image";
 
 					// write to file
-					ofs.write(data, 640 * 480);
+					ofs.write(data, imgSize);
 
 					_writeInfo[p] = std::make_tuple(std::get<0>(_writeInfo[p]), timestamp, false);
 				}
@@ -212,14 +211,14 @@ namespace rsw {
 		}
 	}
 
-	RealSenseWrapper::RSError RealSenseWrapper::startStream(std::string serial,
+	RealSenseWrapper::RSError RealSenseWrapper::enableStream(std::string serial,
 			rs::stream strm, std::string streamName, int width, int height,
 			rs::format fmt, int framerate) {
 		fs::path p(dataPath / serial / rs_stream_to_string((rs_stream)strm) / streamName);
 		_deviceMapM.lock_shared();
 		_writeInfoM.lock_shared();
 		// Check if we're writing to this stream already or if the name already exists
-		if (_writeInfo.find(p) == _writeInfo.end() && !fs::exists(p) && 
+		if ((_writeInfo.find(p) == _writeInfo.end()) && !fs::exists(p) && 
 				_deviceMap[serial].first != nullptr) {
 			_writeInfoM.unlock_shared();
 			// Create folders
@@ -241,11 +240,9 @@ namespace rsw {
 		}
 	}
 
-	RealSenseWrapper::RSError RealSenseWrapper::stopStream(std::string serial, rs::stream strm,
-			std::string streamName) {
+	RealSenseWrapper::RSError RealSenseWrapper::stopDevice(std::string serial) {
 		_deviceMapM.lock_shared();
 		if (_deviceMap[serial].first != nullptr) {
-			fs::path p(dataPath / serial / rs_stream_to_string((rs_stream)strm) / streamName);
 			_writeInfoM.lock();
 			if (_writeInfo.find(p) != _writeInfo.end()) {
 				_writeInfo[p] = std::make_tuple(std::get<0>(_writeInfo[p]),
@@ -256,6 +253,9 @@ namespace rsw {
 		_deviceMapM.unlock_shared();
 		return NO_ERROR;
 	}
+ }
+
+
 }
 
 using namespace std;
@@ -274,42 +274,46 @@ int main(void) try {
 	// TEST: print status of devices (attached/not attached, available playback, if stream is streaming)
 	realsense.printStatus();
 
-	vector<char>* init = 0;
-	vector<char>** data = &init;
+	vector<char>** depthData = new vector<char>*;
+	vector<char>** colorData = new vector<char>*;
 	int ret;
 
-	/*
-	// TEST: frame does not exist error
-	int ret = realsense.getFrame(data, "serial", rs::stream::color, "serial_color", 102);
-	// TODO: check error code here
-	*/
-
-	glfwInit();
-
-	// TODO: get GLFW working with multiple threads, test playback by reading frames
-
 	// TEST: starting multiple streams
-	ret = realsense.startStream(TEST_SERIAL, rs::stream::color, "serial_color", 640, 480, rs::format::rgb8, 30);
-	// we have to enable all streams, then start device, or start/stop device again ret = realsense.startStream(TEST_SERIAL, rs::stream::color, "serial_color", 640, 480, rs::format::any, 30);
+	ret = realsense.enableStream(TEST_SERIAL, rs::stream::color, "serial_color", 640, 480, rs::format::rgb8, 30);
+	ret = realsense.enableStream(TEST_SERIAL, rs::stream::depth, "serial_depth", 640, 480, rs::format::z16, 30);
 
-	// TEST: stopping only one stream
-	//ret = realsense.stopStream(TEST_SERIAL, rs::stream::color, "serial_color");
+	ret = realsense.startDevice(TEST_SERIAL);
+
+	// TEST: stopping all streams
+	ret = realsense.stopDevice(TEST_SERIAL);
 
 	// TEST: grabbing frame data from stopped stream and from live stream
-	ret = realsense.getFrame(data, TEST_SERIAL, rs::stream::color, "serial_color", 3751);
-	// TODO FIX THIS GLFW CODE
-	GLFWwindow * win = glfwCreateWindow(1280, 960, "color", nullptr, nullptr);
-	glfwMakeContextCurrent(win);
-	glfwPollEvents();
-	glClear(GL_COLOR_BUFFER_BIT);
-	glPixelZoom(1, -1);
-	glRasterPos2f(0, 1);
-	glDrawPixels(640, 480, GL_RGB, GL_UNSIGNED_BYTE, &data[0]);
-	glfwSwapBuffers(win);
+	glfwInit();
+	GLFWwindow * win = glfwCreateWindow(1300, 1000, "depth and color", nullptr, nullptr);
+	while (true) {
+		ret = realsense.getFrame(colorData, TEST_SERIAL, rs::stream::color, "serial_color");
+		ret = realsense.getFrame(depthData, TEST_SERIAL, rs::stream::depth, "serial_depth");
+		ret = 1;
+		glfwPollEvents();
+		if (ret == rsw::RealSenseWrapper::RSError::NO_ERROR) {
+			glfwMakeContextCurrent(win);
+			glClear(GL_COLOR_BUFFER_BIT);
+			glPixelZoom(1, -1);
+			glRasterPos2f(0, 1);
+			glDrawPixels(640, 480, GL_RGB, GL_UNSIGNED_BYTE, &colorData[0]);
+			//glRasterPos2f(640, 1);
+			//glDrawPixels(640, 480, GL_RGB, GL_UNSIGNED_BYTE, &depthData[0]);
+			glfwSwapBuffers(win);
+			delete *colorData;
+			delete *depthData;
+		}
+	}
 
-	// TODO: test grabbing frame data from live stream
+	delete colorData;
+	delete depthData;
+	glfwTerminate();
 
-	//ret = realsense.stopStream("serial", rs::stream::depth, "serial_depth");
+	ret = realsense.stopDevice(TEST_SERIAL);
 
 	// TODO: test stream name conflicts
 	std::cout << "Waiting...";

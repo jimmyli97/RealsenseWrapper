@@ -16,13 +16,13 @@ include_directories (${CMAKE_SOURCE_DIR}/external/include/
 add_executable (rswrapper ${SOURCES})
 
 IF(WIN32)
-target_link_libraries (rswrapper "opengl32.lib" "${CMAKE_SOURCE_DIR}/external/lib/win32_realsense-d.lib" ${Boost_LIBRARIES} "${CMAKE_SOURCE_DIR}/external/lib/win32_glfw3dll.lib" "${CMAKE_SOURCE_DIR}/external/lib/win32_glfw3.lib")
+target_link_libraries (rswrapper "opengl32.lib" "${CMAKE_SOURCE_DIR}/external/lib/win32/realsense-d.lib" ${Boost_LIBRARIES} "${CMAKE_SOURCE_DIR}/external/lib/win32/glfw3dll.lib" "${CMAKE_SOURCE_DIR}/external/lib/win32/glfw3.lib")
 
 # Copy DLL over for postbuild
 add_custom_command(TARGET rswrapper POST_BUILD 
 	 COMMAND ${CMAKE_COMMAND} -E copy
-		 "${CMAKE_SOURCE_DIR}/external/lib/win32_realsense-d.dll"
-		 "$<TARGET_FILE_DIR:rswrapper>/realsense-d.dll"
-	 COMMENT "Copying DLL"
+		 "${CMAKE_SOURCE_DIR}/external/lib/win32/realsense-d.dll"
+		 "${CMAKE_SOURCE_DIR}/external/lib/win32/glfw3.dll"
+		 "$<TARGET_FILE_DIR:rswrapper>/"
      )
 ENDIF(WIN32)
